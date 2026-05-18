@@ -11,15 +11,28 @@ The goal of this project is to build a fully local streaming bridge for Mixxx th
 5. Expose a clean local API for automation and scripting
 6. Maintain playlists and metadata synchronization
 
-The entire system runs locally on the user's computer.
+The MVP runs entirely locally on the user's computer.
 
 There is NO hosted backend and NO cloud dependency required for the MVP.
+
+However, the architecture should remain compatible with future optional cloud queueing workflows.
+
+The long-term architecture should support:
+
+* mobile queueing
+* remote track submission
+* cloud relay services
+* secure remote device routing
+
+without requiring major architectural rewrites.
 
 The system is intended to function as a personal DJ workflow tool that integrates streaming discovery with local DJ library management.
 
 ---
 
 # High-Level Architecture
+
+## MVP Local Architecture
 
 ```text
 +----------------------+
@@ -34,8 +47,8 @@ The system is intended to function as a personal DJ workflow tool that integrate
 | REST API             |
 | WebSocket API        |
 | Download Queue       |
-| Metadata Manager     |
-| Playlist Manager     |
+| Session Manager      |
+| Duplicate Detection  |
 +----------+-----------+
            |
            v
@@ -43,8 +56,7 @@ The system is intended to function as a personal DJ workflow tool that integrate
 | Download Engine      |
 |----------------------|
 | SpotiFLAC Wrapper    |
-| File Organizer       |
-| Metadata Scanner     |
+| File Placement       |
 | Notification Service |
 +----------+-----------+
            |
@@ -53,10 +65,61 @@ The system is intended to function as a personal DJ workflow tool that integrate
 | Mixxx Integration    |
 |----------------------|
 | Watched Folders      |
-| SQLite Integration   |
-| Playlist Sync        |
+| Library Detection    |
 +----------------------+
 ```
+
+---
+
+## Future Cloud-Compatible Architecture
+
+The system should be designed so the local bridge server can later connect to an optional remote relay service.
+
+Future architecture:
+
+```text
++----------------------+
+| Mobile App / Website |
++----------+-----------+
+           |
+           v
++----------------------+
+| AWS Relay Service    |
+|----------------------|
+| Queue Routing        |
+| Device Auth          |
+| Session Relay        |
++----------+-----------+
+           |
+           | WebSocket Tunnel
+           v
++----------------------+
+| Local Bridge Server  |
++----------------------+
+```
+
+Potential infrastructure:
+
+* AWS ECS
+* AWS Lambda
+* API Gateway
+* Cloudflare Tunnel
+* Cloudflare Zero Trust
+* Cloudflare DNS
+* WebSocket relay services
+
+The important design goal is:
+
+The LOCAL bridge server remains the source of truth.
+
+The cloud service should only function as:
+
+* a relay
+* authentication layer
+* queue forwarder
+* optional remote control layer
+
+Audio downloading should remain local whenever possible.
 
 ---
 
@@ -84,6 +147,8 @@ The API is intended to be easy to use from:
 * external applications
 * Mixxx integrations
 * future GUI applications
+* future mobile queueing systems
+* future cloud relay systems
 
 ---
 
@@ -164,6 +229,22 @@ POST /playlist
 ```http
 POST /mixxx/rescan
 ```
+
+---
+
+## API Design Philosophy
+
+The API should be designed as if remote/mobile clients may exist in the future even though the MVP is fully local.
+
+This means:
+
+* stable JSON payloads
+* stateless request design where possible
+* explicit job IDs
+* event-driven updates
+* future authentication compatibility
+
+This avoids needing major rewrites when adding cloud/mobile queueing.
 
 ---
 
@@ -261,6 +342,38 @@ Session state can optionally be persisted temporarily to JSON for:
 * tracking downloaded files for cleanup
 
 This keeps the architecture lightweight and avoids unnecessary infrastructure.
+
+---
+
+## Future Remote Session Compatibility
+
+Even though the MVP is local-only, session objects should be structured in a way that could later synchronize with remote queueing systems.
+
+Example future use case:
+
+```text
+1. User pastes Spotify URL on phone
+2. Cloud relay forwards job
+3. Local bridge server receives job
+4. Local machine downloads track
+5. Mixxx imports track
+6. Phone receives completion notification
+```
+
+Recommended future-compatible session fields:
+
+```json
+{
+  "session_id": "uuid",
+  "device_id": "uuid",
+  "created_at": "timestamp",
+  "downloads": []
+}
+```
+
+The MVP does NOT need cloud synchronization.
+
+This only affects internal data structure design.
 
 ---
 
@@ -926,32 +1039,77 @@ This keeps the architecture simpler and more aligned with Mixxx's native analysi
 
 ---
 
-# 10. Security Model
+# 10. Future Remote Security Model
 
-## Device Authentication
+The MVP does not require authentication because it is entirely local.
 
-Each local agent receives:
+However, future mobile queueing support should assume:
 
-```text
-Device Token
-```
-
-stored securely in:
-
-```text
-~/Library/Application Support/MixxxBridge/
-```
+* remote clients exist
+* cloud relays may exist
+* devices must be authenticated
 
 ---
 
-## Preventing Unauthorized Downloads
+## Recommended Future Architecture
 
-The backend only routes jobs to:
+The recommended future architecture is:
 
-* authenticated users
-* registered devices
+```text
+Phone/Web App
+    ↓
+Cloudflare
+    ↓
+AWS Relay Service
+    ↓
+Persistent WebSocket Tunnel
+    ↓
+Local Bridge Server
+```
 
-This prevents random users from pushing downloads to someone else's machine.
+This avoids:
+
+* exposing local ports publicly
+* requiring manual router configuration
+* direct inbound access to the user's machine
+
+---
+
+## Recommended Technologies
+
+### Cloudflare
+
+Potential uses:
+
+* Cloudflare Tunnel
+* Cloudflare Access
+* Cloudflare Zero Trust
+* DNS routing
+* TLS termination
+
+### AWS
+
+Potential uses:
+
+* ECS
+* Lambda
+* API Gateway
+* DynamoDB
+* SQS
+
+---
+
+## Important Security Principle
+
+The local machine should NEVER expose raw filesystem access remotely.
+
+The local bridge server should only expose:
+
+* controlled API endpoints
+* authenticated queue operations
+* download status events
+
+The local bridge server remains the authoritative execution layer.
 
 ---
 
@@ -959,11 +1117,27 @@ This prevents random users from pushing downloads to someone else's machine.
 
 ## Mobile Queueing
 
-Allow:
+Future versions may support:
 
 * queue tracks from phone
-* import remotely
-* synchronize to desktop
+* queue tracks from a website
+* remote notifications
+* remote session management
+* synchronized queue state
+
+The recommended future deployment architecture is:
+
+* AWS-hosted relay services
+* Cloudflare-managed networking and security
+* persistent outbound WebSocket connection from local bridge server
+
+The local bridge server should continue performing:
+
+* downloads
+* duplicate detection
+* Mixxx integration
+* file placement
+* session cleanup
 
 ---
 
@@ -1003,19 +1177,28 @@ Future versions may support:
 
 # 13. Recommended Tech Stack
 
-## Frontend
+## Optional Future Frontend
+
+Only required for future cloud/mobile queueing.
+
+Potential stack:
 
 * Next.js
 * TailwindCSS
 * React Query
 * Socket.IO
 
-## Backend
+## Optional Future Cloud Relay
+
+Only required for future remote queueing.
+
+Potential stack:
 
 * FastAPI
-* PostgreSQL
-* Redis
+* AWS ECS
+* API Gateway
 * WebSockets
+* Cloudflare
 
 ## Local Agent
 
@@ -1051,9 +1234,10 @@ Future versions may support:
 
 ## Phase 4
 
-* Streaming decks
-* Rekordbox export
-* Cloud sync
+* Mobile queueing
+* Cloud relay service
+* Remote notifications
+* Remote session management
 
 ---
 
@@ -1076,7 +1260,7 @@ The long-term goal is to create a modern open-source DJ ingestion pipeline that:
 * integrates deeply with Mixxx
 * supports cloud queueing
 * enables collaborative playlist workflows
-* eventually supports real-time streaming decks
+* supports future remote/mobile queueing
 
 The system should feel similar to modern DJ streaming integrations such as rekordbox Spotify-style workflows where tracks quickly appear inside the DJ software after download.
 
